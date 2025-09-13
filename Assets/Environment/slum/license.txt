@@ -1,0 +1,11 @@
+Model Information:
+* title:	Slum
+* source:	https://sketchfab.com/3d-models/slum-42f42629a3a241968bc58c48426ad0c5
+* author:	Joshua Rei (https://sketchfab.com/jshdsnts)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Slum" (https://sketchfab.com/3d-models/slum-42f42629a3a241968bc58c48426ad0c5) by Joshua Rei (https://sketchfab.com/jshdsnts) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
