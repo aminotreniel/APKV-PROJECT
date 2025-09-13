@@ -1,0 +1,20 @@
+{
+    "name": "CustomInspectorsDef",
+    "rootNamespace": "",
+    "references": [
+        "Unity.Core.Editor",
+        "Unity.Entities.UI.Editor",
+        "Unity.Entities.Graphics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

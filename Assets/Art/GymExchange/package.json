@@ -1,0 +1,9 @@
+{
+  "name": "com.unity.demo.timeghost.data.gymexchange",
+  "displayName": "TimeGhost GymExchange",
+  "version": "1.0.0",
+  "unity": "2023.3",
+  "description": "",
+  "keywords": [],
+  "dependencies": {}
+}

@@ -1,0 +1,393 @@
+#pragma kernel kClear
+#pragma kernel kExtractColor
+#pragma kernel kExtractAlpha
+#pragma kernel kExtractDepth
+#pragma kernel kCopyToAtlas
+#pragma kernel kCopyToAtlasCutout ISCUTOUT
+#pragma kernel kDilateFrameColorChannels
+#pragma kernel kDilateFrameColorAndAlphaChannels
+#pragma kernel kProcessFrameAlpha
+#pragma kernel kProduceCutoutToAlphaChannel
+#pragma kernel kProduceCutout ISCUTOUT
+#pragma kernel kDownSample
+#pragma kernel kDownSampleCutout ISCUTOUT
+#pragma kernel kCalculateMinMaxLightness
+#pragma kernel kConvertAlbedoToLightness
+
+
+//make sure to update .cs counterpart
+#define DOWNSAMPLE_TARGET_IS_NORMALDEPTH (1 << 0)
+#define DOWNSAMPLE_CALCULATE_VARIANCE (1 << 1)
+#define PROCESS_ALPHA_PRODUCE_DISTANCE_FIELD (1 << 2)
+
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
+
+float4 _ZBufferParams;
+
+uint2 _TextureResolution;
+uint2 _TextureOffset;
+
+float2 _DilateDirection;
+uint _DilateStepCount;
+uint2 _KernelSize;
+
+float4 _ClearValue;
+
+Texture2D _SourceCutout;
+Texture2D _SourceTexture;
+
+int _Flags;
+
+#ifdef ISCUTOUT
+RWTexture2D<float> _TargetTexture;
+RWTexture2D<float> _TargetTexture2;
+#else
+RWTexture2D<float4> _TargetTexture;
+RWTexture2D<float4> _TargetTexture2;
+#endif
+
+RWStructuredBuffer<uint> _LightnessMaxBuffer;
+
+SamplerState dilate_point_clamp_sampler;
+
+bool IsBitSet(int mask, int val)
+{
+    return (mask & val) != 0;
+}
+
+[numthreads(8,8,1)]
+void kClear (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    _TargetTexture[dispatchId.xy] = _ClearValue;
+}
+
+[numthreads(8,8,1)]
+void kExtractColor (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    float3 color = _SourceTexture.Load(int3(dispatchId.x, dispatchId.y, 0)).rgb;
+    float4 dst = _TargetTexture[dispatchId.xy];
+    dst.xyz = color;
+    _TargetTexture[dispatchId.xy] = dst;
+}
+
+[numthreads(8,8,1)]
+void kExtractAlpha (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    float alpha = _SourceTexture.Load(int3(dispatchId.x, dispatchId.y, 0)).x;
+
+    float4 dst = _TargetTexture[dispatchId.xy];
+    dst.a = alpha;
+    _TargetTexture[dispatchId.xy] = dst;
+}
+
+[numthreads(8,8,1)]
+void kExtractDepth (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    
+    float depth = _SourceTexture.Load(int3(dispatchId.x, dispatchId.y, 0)).r;
+    float linearDepth = Linear01Depth(depth, _ZBufferParams);
+    float4 dst = _TargetTexture[dispatchId.xy];
+    dst.a = depth;
+    _TargetTexture[dispatchId.xy] = dst;
+}
+
+[numthreads(8,8,1)]
+void kCopyToAtlas (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    uint x = _TextureOffset.x + dispatchId.x;
+    uint y = _TextureOffset.y + dispatchId.y;
+    float4 val = _SourceTexture.Load(int3(dispatchId.x, dispatchId.y, 0));
+    _TargetTexture[uint2(x,y)] = val;
+}
+
+[numthreads(8,8,1)]
+void kCopyToAtlasCutout (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    uint x = _TextureOffset.x + dispatchId.x;
+    uint y = _TextureOffset.y + dispatchId.y;
+    float val = _SourceTexture.Load(int3(dispatchId.x, dispatchId.y, 0));
+    _TargetTexture[uint2(x,y)] = val;
+}
+
+
+
+bool HasValidImpostorTexel(float2 loc)
+{
+    return _SourceTexture.SampleLevel(dilate_point_clamp_sampler, loc, 0).x > 0;
+}
+
+[numthreads(8,8,1)]
+void kDilateFrameColorAndAlphaChannels (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    float2 start = float2(float(dispatchId.x) /_TextureResolution.x, float(dispatchId.y) / _TextureResolution.y);
+
+    if(!HasValidImpostorTexel(start))
+    {
+        for(uint i = 1; i < _DilateStepCount; ++i)
+        {
+            float2 samplePos = start + _DilateDirection * i;
+            
+            if(HasValidImpostorTexel(samplePos))
+            {
+                float4 v = _SourceTexture.SampleLevel(dilate_point_clamp_sampler, samplePos, 0);
+                _TargetTexture[dispatchId.xy] = v;
+                return;
+            }
+        }
+    }
+    else
+    {
+        float4 v = _SourceTexture.SampleLevel(dilate_point_clamp_sampler, start, 0);
+        _TargetTexture[dispatchId.xy] = v;
+    }
+}
+
+[numthreads(8,8,1)]
+void kDilateFrameColorChannels (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    float2 start = float2(float(dispatchId.x) /_TextureResolution.x, float(dispatchId.y) / _TextureResolution.y);
+
+    if(!HasValidImpostorTexel(start))
+    {
+        for(uint i = 1; i < _DilateStepCount; ++i)
+        {
+            float2 samplePos = start + _DilateDirection * i;
+            
+            if(HasValidImpostorTexel(samplePos))
+            {
+                float4 v = _SourceTexture.SampleLevel(dilate_point_clamp_sampler, samplePos, 0);
+                float4 prevValue = _TargetTexture[dispatchId.xy];
+                prevValue.rgb = v.rgb;
+                _TargetTexture[dispatchId.xy] = prevValue;
+                return;
+            }
+        }
+    }
+    else
+    {
+        float4 v = _SourceTexture.SampleLevel(dilate_point_clamp_sampler, start, 0);
+        float4 prevValue = _TargetTexture[dispatchId.xy];
+        prevValue.rgb = v.rgb;
+        _TargetTexture[dispatchId.xy] = prevValue;
+    }
+}
+
+
+float AlphaToDistanceField(uint3 dispatchId)
+{
+    //alpha is generated from a distance field to the edge
+    float2 stepSize = float2(1.f /_TextureResolution.x, 1.f / _TextureResolution.y);
+    float2 currentUV = dispatchId.xy * stepSize;
+    
+    float originalSample = _SourceTexture.SampleLevel(dilate_point_clamp_sampler, currentUV, 0).a > 0;
+    
+    float2 halfKernel = _KernelSize / 2 * stepSize;
+    float2 baseUV = dispatchId.xy * stepSize - halfKernel;
+
+    float minDistSqr = dot(halfKernel, halfKernel);
+    for(int y = 0; y < _KernelSize.y; ++y)
+    {
+        for(int x = 0; x < _KernelSize.x; ++x)
+        {
+            float2 samplePos = baseUV + float2(x,y) * stepSize;
+            float samp = _SourceTexture.SampleLevel(dilate_point_clamp_sampler, samplePos, 0).a > 0;
+
+            if(samp != originalSample)
+            {
+                float2 dist = samplePos - currentUV;
+                float distSqr = dot(dist, dist);
+                if(distSqr < minDistSqr)
+                {
+                    minDistSqr = distSqr;
+                }
+            }
+        }
+    }
+
+    float v = sqrt(minDistSqr) / length(halfKernel);
+    v *= originalSample > 0.0f ? 1.f : -1.f;
+    v =  (v + 1.f) * 0.5f;
+    return v;
+}
+
+float BlurAlpha(uint3 dispatchId)
+{
+    //alpha is generated from a distance field to the edge
+    float2 stepSize = float2(1.f /_TextureResolution.x, 1.f / _TextureResolution.y);
+    
+    float2 halfKernel = _KernelSize / 2 * stepSize;
+    float2 baseUV = dispatchId.xy * stepSize - halfKernel;
+    
+    float sum = 0.f;
+    for(int y = 0; y < _KernelSize.y; ++y)
+    {
+        for(int x = 0; x < _KernelSize.x; ++x)
+        {
+            float2 samplePos = baseUV + float2(x,y) * stepSize;
+            sum += _SourceTexture.SampleLevel(dilate_point_clamp_sampler, samplePos, 0).a;
+        }
+    }
+    sum /= _KernelSize.x * _KernelSize.y;
+    return sum;
+}
+
+[numthreads(8,8,1)]
+void kProcessFrameAlpha (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    float v;
+    if(IsBitSet(_Flags, PROCESS_ALPHA_PRODUCE_DISTANCE_FIELD))
+    {
+        v = AlphaToDistanceField(dispatchId);
+    }
+    else
+    {
+        v = BlurAlpha(dispatchId);
+    }
+
+    float4 prevValue = _TargetTexture[dispatchId.xy];
+    prevValue.a = v;
+    _TargetTexture[dispatchId.xy] = prevValue;
+}
+
+[numthreads(8,8,1)]
+void kProduceCutoutToAlphaChannel (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    float4 val = _TargetTexture[dispatchId.xy];
+    val.w = val.w > 0 ? 1.f : 0.f;
+    _TargetTexture[dispatchId.xy] = val;
+}
+
+[numthreads(8,8,1)]
+void kProduceCutout (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    float val = _SourceTexture.Load(int3(dispatchId.x, dispatchId.y, 0)).a;
+    _TargetTexture[dispatchId.xy] = val > 0;
+}
+
+[numthreads(8,8,1)]
+void kDownSample (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+
+    int2 srcLocBase = dispatchId.xy * _KernelSize;
+    bool isNormalDepth = IsBitSet(_Flags, DOWNSAMPLE_TARGET_IS_NORMALDEPTH);
+    bool outputSd = IsBitSet(_Flags, DOWNSAMPLE_CALCULATE_VARIANCE);
+
+    float4 mean = 0;
+    float4 variance = 0;
+    int validSamples = 0;
+    float maxAlpha = 0;
+
+    float alphaSum = 0;
+    
+    for(int i = 0; i < _KernelSize.x * _KernelSize.y; ++i)
+    {
+        int2 offs = int2(i % _KernelSize.x, i / _KernelSize.x);
+        int2 sampleLoc = srcLocBase + offs;
+
+        float4 s = _SourceTexture.Load(int3(sampleLoc.x, sampleLoc.y, 0));
+
+        bool sampleValid = s.a != 0;
+        alphaSum += s.a;
+        if(sampleValid) //for color, only samples with alpha > 0 are taken into account
+        {
+            int newSampleCount = validSamples + 1;
+            float3 previousMean = mean.xyz;
+            mean.xyz = mean.xyz + (s.xyz - mean.xyz) / newSampleCount;
+            variance.xyz = variance.xyz + (s.xyz - mean.xyz) * (s.xyz - previousMean.xyz);
+            validSamples = newSampleCount;
+        }
+        //alpha mean & variance
+        {
+            float previousMean = mean.a;
+            mean.a = mean.a + (s.a - mean.a) / (i + 1);
+            variance.a = variance.a + (s.a - mean.a) * (s.a - previousMean);
+        }
+        
+        maxAlpha = max(maxAlpha, s.a);
+    }
+
+    alphaSum /= _KernelSize.x * _KernelSize.y;
+
+    variance.xyz /= validSamples;
+    variance.a /= _KernelSize.x * _KernelSize.y;
+
+    if(isNormalDepth)
+    {
+        mean.xyz = mean.xyz * 2.f - 1.f;
+        mean.xyz = normalize(mean.xyz);
+        mean.xyz = mean.xyz * 0.5f + 0.5f;
+        mean.a = maxAlpha;
+    }
+
+    _TargetTexture[dispatchId.xy] = float4(mean.x, mean.y, mean.z, maxAlpha);
+    if(outputSd)
+    {
+        _TargetTexture2[dispatchId.xy] = sqrt(variance);
+    }
+}
+
+[numthreads(8,8,1)]
+void kDownSampleCutout (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    int2 srcLocBase = dispatchId.xy * 2;
+    float mean = 0;
+    float w = 1.f/(_KernelSize.x * _KernelSize.y);
+    
+    for(int i = 0; i < _KernelSize.x * _KernelSize.y; ++i)
+    {
+        int2 offs = int2(i % _KernelSize.x, i / _KernelSize.x);
+        int2 sampleLoc = srcLocBase + offs;
+        float s = _SourceTexture.Load(int3(sampleLoc.x, sampleLoc.y, 0)).a;
+        float mean = mean + (s - mean) * w;
+    }
+
+    _TargetTexture[dispatchId.xy] = mean;
+}
+
+float CalculateLightness(float3 albedo)
+{
+    return dot(albedo, float3(0.3333f, 0.3333f, 0.3333f));
+}
+
+[numthreads(8,8,1)]
+void kCalculateMinMaxLightness (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    float4 val = _TargetTexture[dispatchId.xy];
+    float lightness = CalculateLightness(val.xyz);
+    InterlockedMax(_LightnessMaxBuffer[0], PackFloatToUInt(lightness, 0, 31));
+}
+
+
+[numthreads(8,8,1)]
+void kConvertAlbedoToLightness (uint3 dispatchId : SV_DispatchThreadID)
+{
+    if(dispatchId.x >= _TextureResolution.x || dispatchId.y >= _TextureResolution.y) return;
+    float4 val = _TargetTexture[dispatchId.xy];
+    float lightnessMax = UnpackUIntToFloat(_LightnessMaxBuffer[0], 0, 31);
+    float lightness = CalculateLightness(val.xyz);
+    lightness /= max(lightnessMax, 0.000001f);
+    val = float4(lightness, lightness, lightness, val.a);
+    _TargetTexture[dispatchId.xy] = val;
+}

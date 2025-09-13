@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1953259897 &8574412962073106934
+TerrainLayer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: TL_Emigrant_Dry_Grass_Flat_Tileable_01_V1
+  m_DiffuseTexture: {fileID: 2800000, guid: 3f36f285e9fb1b6448db84668dfab9c9, type: 3}
+  m_NormalMapTexture: {fileID: 2800000, guid: 83e2576b111f440419e93f7b83633d76, type: 3}
+  m_MaskMapTexture: {fileID: 2800000, guid: 5693debd1db032c49b10ad340c7b459a, type: 3}
+  m_TileSize: {x: 6, y: 6}
+  m_TileOffset: {x: 0, y: 0}
+  m_Specular: {r: 0, g: 0, b: 0, a: 0}
+  m_Metallic: 0
+  m_Smoothness: 0
+  m_NormalScale: 1
+  m_DiffuseRemapMin: {x: 0, y: 0, z: 0, w: 0}
+  m_DiffuseRemapMax: {x: 0.65, y: 0.65, z: 0.65, w: 1}
+  m_MaskMapRemapMin: {x: 0, y: 0, z: -0.126, w: 0}
+  m_MaskMapRemapMax: {x: 1, y: 1, z: 0.874, w: 1}
+  m_SmoothnessSource: 1

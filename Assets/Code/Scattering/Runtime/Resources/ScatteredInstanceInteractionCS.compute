@@ -1,0 +1,547 @@
+#pragma kernel kCopyBuffer
+#pragma kernel kResetFreeAndReservedPageCounters
+#pragma kernel kResetDefragmentCounter
+#pragma kernel kResetPerTileHeaders
+#pragma kernel kSetupUpdateSimulationArgs
+#pragma kernel kSetupPerTileHeaderMappings SETUP_TILEHEADER_MAPPING
+#pragma kernel kFreePages FREE_PAGES
+#pragma kernel kAppendFreePages APPEND_FREE_PAGES
+#pragma kernel kIncrementFreePagesCounter APPEND_FREE_PAGES
+#pragma kernel kDefragmentPages DEFRAGMENT_PAGES
+#pragma kernel kReservePages RESERVE_PAGES
+#pragma kernel kUploadTileData UPLOAD_TILE_DATA
+#pragma kernel kApplyCapsuleCollider APPLY_CAPSULE_COLLIDER
+#pragma kernel kUpdateSimulation UPDATE_SIMULATION
+#pragma kernel kUpdatePreviousPosition UPDATE_PREV_OFFSET
+
+#include "../Interaction/ScatteredInstanceInteractionCommon.hlsl"
+#include "../Interaction/ScatteredInstanceInteractionUtility.hlsl"
+
+#define FREE_PAGES_COUNTER_INDEX (0)
+#define RESERVED_PAGES_COUNTER_INDEX (1)
+
+struct CapsuleColliderEntry
+{
+    float4 wp0Radius;
+    float4 wp1;
+
+};
+
+///////////////////////////  COPY BUFFER KERNELS ///////////////////////////
+RWByteAddressBuffer _CopyDstBuffer;
+ByteAddressBuffer _CopySrcBuffer;
+int _CopySrcOffsetInWords;
+int _CopyDstOffsetInWords;
+int _TotalWordCountToCopy;
+
+[numthreads(64,1,1)]
+void kCopyBuffer (uint id : SV_DispatchThreadID)
+{
+
+    uint currentOffset = id;
+    if(currentOffset >= (uint)_TotalWordCountToCopy) return;
+    
+    uint copyDstAddress = ((uint)_CopyDstOffsetInWords + currentOffset) << 2;
+    uint copySrcAddress = ((uint)_CopySrcOffsetInWords + currentOffset) << 2;
+    _CopyDstBuffer.Store(copyDstAddress, _CopySrcBuffer.Load(copySrcAddress));
+    
+}
+
+///////////////////////////  PAGE KERNELS ///////////////////////////
+
+StructuredBuffer<int> _Counters;
+RWStructuredBuffer<int> _CountersRW;
+RWByteAddressBuffer _ReservedPagesBufferRW;
+RWStructuredBuffer<PerTileHeaderEntry> _PerTileHeaderBufferRW;
+RWByteAddressBuffer _FreePagesBufferRW;
+ByteAddressBuffer _FreePagesBuffer;
+RWByteAddressBuffer _PerInstanceStateBufferRW;
+RWByteAddressBuffer _PerInstancePropertiesBufferRW;
+
+
+//Utility functions
+
+void StorePerInstanceState(int index, in ScatteredInstanceState state)
+{
+    ScatteredInstanceStatePacked packedState;
+    PackInstanceState(state, packedState);
+
+    uint offset1 = 8 * (uint)index;
+    uint offset2 = offset1 + 4;
+
+    _PerInstanceStateBufferRW.Store4(offset1 << 2, asuint(packedState._OffsetStiffnessVelocityDamping));
+    _PerInstanceStateBufferRW.Store4(offset2 << 2, asuint(packedState._EquilibriumUnused));
+
+}
+
+void LoadPerInstanceStateRW(int index, out ScatteredInstanceState state)
+{
+    uint offset1 = 8 * (uint)index;
+    uint offset2 = offset1 + 4;
+    ScatteredInstanceStatePacked packedState;
+    packedState._OffsetStiffnessVelocityDamping = _PerInstanceStateBufferRW.Load4(offset1 << 2);
+    packedState._EquilibriumUnused = _PerInstanceStateBufferRW.Load4(offset2 << 2);
+    UnpackInstanceState(packedState, state);
+}
+
+void StorePerInstanceProperties(int index, in ScatteredInstancePropertiesPacked packedState)
+{
+    uint offset1 = 8 * (uint)index;
+    uint offset2 = offset1 + 4;
+    
+    _PerInstancePropertiesBufferRW.Store4(offset1 << 2, packedState._PositionFlags);
+    _PerInstancePropertiesBufferRW.Store4(offset2 << 2, asuint(packedState._SpringDataPlasticityPacked));
+
+}
+
+void StorePerInstanceProperties(int index, in ScatteredInstanceProperties props)
+{
+    ScatteredInstancePropertiesPacked packedState;
+    PackInstanceProperties(props, packedState);
+    StorePerInstanceProperties(index, packedState);
+}
+
+
+
+void LoadPerInstancePropertiesRW(int index, out ScatteredInstanceProperties props)
+{
+    uint offset1 = 8 * (uint)index;
+    uint offset2 = offset1 + 4;
+    ScatteredInstancePropertiesPacked packedState;
+    packedState._PositionFlags = _PerInstancePropertiesBufferRW.Load4(offset1 << 2);
+    packedState._SpringDataPlasticityPacked = _PerInstancePropertiesBufferRW.Load4(offset2 << 2);
+    UnpackInstanceProperties(packedState, props);
+}
+
+PerTileHeaderEntry InitTileHeaderEntry(int pageCount, int pageOffset, int entryCount, int globalTileIndex)
+{
+    PerTileHeaderEntry entry;
+    entry._PageCount = pageCount;
+    entry._PageOffset = pageOffset;
+    entry._EntryCount = entryCount;
+    entry._GlobalTileIndex = globalTileIndex;
+    return entry;
+}
+
+
+
+//  SETUP KERNELS
+[numthreads(1,1,1)]
+void kResetDefragmentCounter (uint id : SV_DispatchThreadID)
+{
+    _CountersRW[RESERVED_PAGES_COUNTER_INDEX] = 0;
+}
+
+
+[numthreads(1,1,1)]
+void kResetFreeAndReservedPageCounters (uint id : SV_DispatchThreadID)
+{
+    _CountersRW[RESERVED_PAGES_COUNTER_INDEX] = 0;
+    _CountersRW[FREE_PAGES_COUNTER_INDEX] = 0;
+}
+
+
+int _TotalNumberOfTiles;
+[numthreads(64,1,1)]
+void kResetPerTileHeaders (uint id : SV_DispatchThreadID)
+{
+    if(id >= (uint)_TotalNumberOfTiles) return;
+
+    PerTileHeaderEntry entry = InitTileHeaderEntry(0, 0, 0, INVALID_ABSOLUTE_TILE_INDEX);
+    _PerTileHeaderBufferRW[id] = entry;
+}
+
+RWBuffer<uint> _UpdateSimulationArgsBuffer;
+[numthreads(1,1,1)]
+void kSetupUpdateSimulationArgs (uint id : SV_DispatchThreadID)
+{
+    int numberOfActivePages = _Counters[RESERVED_PAGES_COUNTER_INDEX];
+    _UpdateSimulationArgsBuffer[0] = numberOfActivePages;
+    _UpdateSimulationArgsBuffer[1] = 1;
+    _UpdateSimulationArgsBuffer[2] = 1;
+}
+
+
+
+// PAGE ALLOCATION KERNELS
+
+//setup tile header
+#ifdef SETUP_TILEHEADER_MAPPING
+int _NumberOfTileHeadersToMap;
+ByteAddressBuffer _TileHeaderMappingBuffer;
+[numthreads(64,1,1)]
+void kSetupPerTileHeaderMappings (uint id : SV_DispatchThreadID)
+{
+    if(id >= (uint)_NumberOfTileHeadersToMap) return;
+
+    uint2 tileHeaderMapping = _TileHeaderMappingBuffer.Load2(id << 3);
+    PerTileHeaderEntry entry = _PerTileHeaderBufferRW[tileHeaderMapping.x];
+    entry._GlobalTileIndex = tileHeaderMapping.y;
+    _PerTileHeaderBufferRW[tileHeaderMapping.x] = entry;
+}
+#endif
+
+//Free pages
+#ifdef FREE_PAGES
+
+ByteAddressBuffer _TilesToFreeBuffer;
+int _TilesToFreeCount;
+groupshared PerTileHeaderEntry gs_HeaderEntry;
+groupshared uint gs_FreePagesOffset;
+
+#define FREE_PAGES_GROUP_SIZE 64
+[numthreads(FREE_PAGES_GROUP_SIZE,1,1)]
+void kFreePages (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        uint tileToFree = _TilesToFreeBuffer.Load(groupID << 2);
+        gs_HeaderEntry = _PerTileHeaderBufferRW[tileToFree];
+        if(gs_HeaderEntry._PageCount > 0)
+        {
+            InterlockedAdd(_CountersRW[FREE_PAGES_COUNTER_INDEX], gs_HeaderEntry._PageCount, gs_FreePagesOffset);
+        }
+        
+        PerTileHeaderEntry entry = InitTileHeaderEntry(0, 0, 0, INVALID_ABSOLUTE_TILE_INDEX);
+        _PerTileHeaderBufferRW[tileToFree] = entry;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+    
+    uint tilePagesCount = gs_HeaderEntry._PageCount;
+    uint tilePageOffset = gs_HeaderEntry._PageOffset;
+
+    if(tilePagesCount == 0) return;
+    
+    for(uint i = groupIndex; i < tilePagesCount; i += FREE_PAGES_GROUP_SIZE)
+    {
+        uint freePageIndex = _ReservedPagesBuffer.Load((tilePageOffset + i) << 2);
+        _FreePagesBufferRW.Store((gs_FreePagesOffset + i) << 2, freePageIndex);
+    }
+}
+#endif
+
+#ifdef APPEND_FREE_PAGES
+int2 _FreePagesRange;
+[numthreads(64,1,1)]
+void kAppendFreePages (uint id : SV_DispatchThreadID)
+{
+    uint pageIndexOffset = (uint)_FreePagesRange.x;
+    uint freePagesCount = (uint)_FreePagesRange.y;
+    
+    if(id >= freePagesCount) return;
+
+    uint currentFreePagesCount = (uint)_Counters[FREE_PAGES_COUNTER_INDEX];
+    
+    uint offset = currentFreePagesCount + id;
+    uint pageIndexToAdd = pageIndexOffset + id;
+    _FreePagesBufferRW.Store(offset << 2, pageIndexToAdd);
+}
+
+[numthreads(1,1,1)]
+void kIncrementFreePagesCounter (uint id : SV_DispatchThreadID)
+{
+    _CountersRW[FREE_PAGES_COUNTER_INDEX] = _CountersRW[FREE_PAGES_COUNTER_INDEX] + _FreePagesRange.y;
+}
+
+#endif
+
+
+//defragment reserved pages
+#ifdef DEFRAGMENT_PAGES
+
+ByteAddressBuffer _ReservedPagesToDefragment;
+uint _DefragmentTileOffset;
+groupshared PerTileHeaderEntry gs_HeaderEntry;
+groupshared uint gs_ReservedPagesOffset;
+
+#define DEFRAGMENT_PAGES_GROUP_SIZE 64
+[numthreads(DEFRAGMENT_PAGES_GROUP_SIZE,1,1)]
+void kDefragmentPages (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        gs_HeaderEntry = _PerTileHeaderBufferRW[_DefragmentTileOffset + groupID];
+        if(gs_HeaderEntry._PageCount > 0)
+        {
+            InterlockedAdd(_CountersRW[RESERVED_PAGES_COUNTER_INDEX], gs_HeaderEntry._PageCount, gs_ReservedPagesOffset);
+        }
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+    
+    uint tilePagesCount = gs_HeaderEntry._PageCount;
+    uint tilePageOffset = gs_HeaderEntry._PageOffset;
+
+    if(tilePagesCount == 0) return;
+    
+    for(uint i = groupIndex; i < tilePagesCount; i += DEFRAGMENT_PAGES_GROUP_SIZE)
+    {
+        uint pageIndex = _ReservedPagesToDefragment.Load((tilePageOffset + i) << 2);
+        _ReservedPagesBufferRW.Store((gs_ReservedPagesOffset + i) << 2, pageIndex);
+    }
+
+    if(groupIndex == 0)
+    {
+        gs_HeaderEntry._PageOffset = gs_ReservedPagesOffset;
+        _PerTileHeaderBufferRW[_DefragmentTileOffset + groupID] = gs_HeaderEntry;
+    }
+}
+#endif
+
+//reserve pages
+#ifdef RESERVE_PAGES
+ByteAddressBuffer _TileIndexAndPageEntryCountsBuffer;
+groupshared PerTileHeaderEntry gs_HeaderEntry;
+groupshared int gs_FreeListOffset;
+groupshared uint gs_TileIndex;
+#define RESERVE_PAGES_GROUP_SIZE 64
+[numthreads(RESERVE_PAGES_GROUP_SIZE,1,1)]
+void kReservePages (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        int3 tileIndexPageAndEntryCount = asint(_TileIndexAndPageEntryCountsBuffer.Load3((groupID * 3) << 2));
+        gs_TileIndex = (uint)tileIndexPageAndEntryCount.x;
+        gs_HeaderEntry = InitTileHeaderEntry(tileIndexPageAndEntryCount.y, 0, tileIndexPageAndEntryCount.z, INVALID_ABSOLUTE_TILE_INDEX);
+        if(tileIndexPageAndEntryCount.y > 0)
+        {
+            InterlockedAdd(_CountersRW[FREE_PAGES_COUNTER_INDEX], -tileIndexPageAndEntryCount.y, gs_FreeListOffset);
+            InterlockedAdd(_CountersRW[RESERVED_PAGES_COUNTER_INDEX], tileIndexPageAndEntryCount.y, gs_HeaderEntry._PageOffset);
+            gs_FreeListOffset -= tileIndexPageAndEntryCount.y;
+        }
+        _PerTileHeaderBufferRW[gs_TileIndex] = gs_HeaderEntry;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+    
+    uint tilePagesCount = gs_HeaderEntry._PageCount;
+    uint tilePageOffset = gs_HeaderEntry._PageOffset;
+
+    if(tilePagesCount == 0) return;
+
+    for(uint i = groupIndex; i < tilePagesCount; i += RESERVE_PAGES_GROUP_SIZE)
+    {
+        uint freePageIndex = _FreePagesBuffer.Load((gs_FreeListOffset + i) << 2);
+        _ReservedPagesBufferRW.Store((tilePageOffset + i) << 2, freePageIndex);
+    }
+    
+}
+
+#endif
+
+
+#ifdef UPLOAD_TILE_DATA
+StructuredBuffer<ScatteredInstancePropertiesPacked> _UploadBatchDataBuffer;
+StructuredBuffer<ScatteredInstanceDataUploadBatch> _UploadBatchEntries;
+groupshared uint gs_DestinationPageIndex;
+groupshared ScatteredInstanceDataUploadBatch gs_BatchInfo;
+#define UPLOAD_PAGES_GROUP_SIZE SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE
+[numthreads(UPLOAD_PAGES_GROUP_SIZE,1,1)]
+void kUploadTileData (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        gs_BatchInfo = _UploadBatchEntries[groupID];
+        uint pageIndex = _PerTileHeaderBuffer[gs_BatchInfo.tileIndex]._PageOffset + gs_BatchInfo.perTilePageOffset;
+        gs_DestinationPageIndex = _ReservedPagesBuffer.Load(pageIndex << 2);
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    if((uint)gs_BatchInfo.entryCount <= groupIndex) return;
+    
+    uint sourceDataOffset = groupID * SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE + groupIndex;
+    uint destinationDataOffset = gs_DestinationPageIndex * SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE + groupIndex;
+
+    //upload instance props data
+    ScatteredInstancePropertiesPacked packedInstanceProps =_UploadBatchDataBuffer[sourceDataOffset];
+    ScatteredInstanceProperties instanceProps;
+    UnpackInstanceProperties(packedInstanceProps, instanceProps);
+    StorePerInstanceProperties(destinationDataOffset, packedInstanceProps);
+
+    //initialize state
+    ScatteredInstanceState state;
+    state.offset = instanceProps.tipOffset;
+    state.stiffness = instanceProps.stiffness;
+    state.velocity = 0;
+    state.damping = instanceProps.damping;
+    state.equilibrium = instanceProps.tipOffset;
+    state.prevOffset = state.offset;
+    StorePerInstanceState(destinationDataOffset, state);
+    
+    //TODO: mark page upload ready
+}
+
+#endif
+
+#ifdef APPLY_CAPSULE_COLLIDER
+
+ByteAddressBuffer _AffectedTilePageAndColliderMasksBuffer;
+StructuredBuffer<CapsuleColliderEntry> _CollidersBuffer;
+uint _AffectedTilePageAndColliderMasksBufferOffset;
+uint _CollidersBufferOffset;
+float _TimeStep;
+
+groupshared uint gs_PageIndex;
+groupshared uint gs_ColliderMask;
+
+#define APPLY_CAPSULE_GROUP_SIZE SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE
+#define MAX_OFFSET_ANGLE 1.5708f
+#define MAX_OFFSET_COS_ANGLE 0
+
+
+[numthreads(APPLY_CAPSULE_GROUP_SIZE,1,1)]
+void kApplyCapsuleCollider (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        uint masksBufferIndex = _AffectedTilePageAndColliderMasksBufferOffset + groupID;
+        uint3 tilePageAndMask = _AffectedTilePageAndColliderMasksBuffer.Load3((masksBufferIndex * 3) << 2);
+        uint pageIndex = _PerTileHeaderBuffer[tilePageAndMask.x]._PageOffset + tilePageAndMask.y;
+        gs_PageIndex = _ReservedPagesBuffer.Load(pageIndex << 2);
+        gs_ColliderMask = tilePageAndMask.z;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    int instanceIndex = gs_PageIndex * SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE + groupIndex;
+
+    ScatteredInstanceProperties instanceProps;
+    LoadPerInstancePropertiesRW(instanceIndex, instanceProps);
+    ScatteredInstanceState state;
+    LoadPerInstanceStateRW(instanceIndex, state);
+    
+    uint colliderMask = gs_ColliderMask;
+    float3 offset = 0;
+    float4 collisionSphere = float4(instanceProps.position + state.offset, instanceProps.tipRadius);
+    float colliderMargin = _ColliderMarginUnused.x;
+    while(colliderMask != 0)
+    {
+        uint colliderIndex = firstbitlow(colliderMask);
+        colliderMask = colliderMask & ~(1 << colliderIndex);
+
+        colliderIndex += _CollidersBufferOffset;
+        CapsuleColliderEntry colliderEntry = _CollidersBuffer[colliderIndex];
+
+        //check intersection
+        float3 intersectionOffset;
+        float distance;
+        if(!IntersectCapsuleSphere(colliderEntry.wp0Radius.xyz, colliderEntry.wp1.xyz, colliderEntry.wp0Radius.w, collisionSphere, intersectionOffset, distance))
+        {
+            continue;
+        } 
+
+        float smoothing = 1.f - smoothstep(1.0f - colliderMargin, 1, distance);
+        offset += intersectionOffset * smoothing;
+    }
+
+    //collider hit
+    if(dot(offset, offset) > 0)
+    {
+        //Apply force (currently we also do a sim step to get new position to check if we managed to break the thing. Should probably just add the force here and allow next sim step to apply it and check breakage (can we have breaking force from other sources? currently assumption is no)
+        ApplyLinearForce( offset * state.stiffness, _TimeStep, state);
+        
+        //check breakage
+        {
+            float originalTipHeight = length(instanceProps.tipOffset);
+            float3 originalTipOffsetDir = instanceProps.tipOffset / originalTipHeight;
+            
+            float offsetLength = length(state.offset);
+            float3 currentTipOffsetDir = state.offset / offsetLength;
+
+            //check if we broke the thing
+            float cosAngle = dot(currentTipOffsetDir, originalTipOffsetDir);
+            if(cosAngle <= instanceProps.plasticityParams.x)
+            {
+
+                //check if the thing is already broken
+                if((instanceProps.flags & INSTANCEPROPERTIESFLAGS_INSTANCE_PERMANENT_DAMAGE) == 0)
+                {
+                    instanceProps.stiffness *= 0.1f;
+                    instanceProps.damping *= 2.f;
+                }
+                
+                //update tip offset
+                float3 rotationAxis = cross(originalTipOffsetDir, currentTipOffsetDir);
+                float4 rotQuat = MakeQuaternionFromAxisAngle(rotationAxis, instanceProps.plasticityParams.y);
+                float3 newTipOffsetDir = QMul(rotQuat, originalTipOffsetDir);
+                state.equilibrium = newTipOffsetDir * originalTipHeight;
+
+                //mark the instance broken and update properties
+                instanceProps.flags |= INSTANCEPROPERTIESFLAGS_INSTANCE_PERMANENT_DAMAGE;
+                StorePerInstanceProperties(instanceIndex, instanceProps);
+                
+            }
+        }
+        
+        
+        
+        StorePerInstanceState(instanceIndex, state);
+    }
+}
+#endif
+
+#ifdef UPDATE_SIMULATION
+float _TimeStep;
+groupshared uint gs_PageIndex;
+#define UPDATE_SIMULATION_GROUP_SIZE SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE
+[numthreads(UPDATE_SIMULATION_GROUP_SIZE,1,1)]
+void kUpdateSimulation (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        gs_PageIndex = _ReservedPagesBuffer.Load(groupID << 2);
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    int instanceIndex = gs_PageIndex * SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE + groupIndex;
+
+    ScatteredInstanceState state;
+    LoadPerInstanceStateRW(instanceIndex, state);
+    
+    //simulate
+    StepSimulation(state, _TimeStep);
+    
+    StorePerInstanceState(instanceIndex, state);
+    
+}
+#endif
+
+#ifdef UPDATE_PREV_OFFSET
+groupshared uint gs_PageIndex;
+#define UPDATE_PREV_POS_GROUP_SIZE SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE
+[numthreads(UPDATE_PREV_POS_GROUP_SIZE,1,1)]
+void kUpdatePreviousPosition (
+    uint groupID : SV_GroupID,
+    uint groupIndex  : SV_GroupIndex)
+{
+    if(groupIndex == 0)
+    {
+        gs_PageIndex = _ReservedPagesBuffer.Load(groupID << 2);
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    int instanceIndex = gs_PageIndex * SCATTERED_INSTANCE_INTERACTION_PAGE_SIZE + groupIndex;
+
+    ScatteredInstanceState state;
+    LoadPerInstanceStateRW(instanceIndex, state);
+    state.prevOffset = state.offset;
+    StorePerInstanceState(instanceIndex, state);
+    
+}
+#endif

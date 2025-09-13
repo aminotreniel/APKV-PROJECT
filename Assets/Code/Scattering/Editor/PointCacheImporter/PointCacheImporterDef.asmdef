@@ -1,0 +1,20 @@
+{
+    "name": "PointCacheImporterDef",
+    "rootNamespace": "",
+    "references": [
+        "Unity.Core.Editor",
+        "Unity.Scenes.Editor",
+        "Unity.VisualEffectGraph.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
