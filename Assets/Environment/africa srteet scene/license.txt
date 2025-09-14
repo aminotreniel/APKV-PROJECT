@@ -1,0 +1,11 @@
+Model Information:
+* title:	Africa Street scene.
+* source:	https://sketchfab.com/3d-models/africa-street-scene-04bfefd8282d4e6e93d720d726d63355
+* author:	Travis Dunkley (https://sketchfab.com/slug_power6)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Africa Street scene." (https://sketchfab.com/3d-models/africa-street-scene-04bfefd8282d4e6e93d720d726d63355) by Travis Dunkley (https://sketchfab.com/slug_power6) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
