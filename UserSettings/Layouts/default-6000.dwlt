@@ -119,7 +119,7 @@ MonoBehaviour:
   m_MinSize: {x: 300, y: 100}
   m_MaxSize: {x: 24288, y: 16192}
   vertical: 0
-  controlID: 215
+  controlID: 54
   draggingID: 0
 --- !u!114 &6
 MonoBehaviour:
@@ -145,7 +145,7 @@ MonoBehaviour:
   m_MinSize: {x: 200, y: 100}
   m_MaxSize: {x: 16192, y: 16192}
   vertical: 1
-  controlID: 216
+  controlID: 55
   draggingID: 0
 --- !u!114 &7
 MonoBehaviour:
@@ -171,7 +171,7 @@ MonoBehaviour:
   m_MinSize: {x: 200, y: 50}
   m_MaxSize: {x: 16192, y: 8096}
   vertical: 0
-  controlID: 217
+  controlID: 49
   draggingID: 0
 --- !u!114 &8
 MonoBehaviour:
@@ -404,7 +404,7 @@ MonoBehaviour:
   m_Pos:
     serializedVersion: 2
     x: 0
-    y: 24
+    y: 79
     width: 342
     height: 733
   m_SerializedDataModeController:
@@ -420,10 +420,10 @@ MonoBehaviour:
     m_OverlaysVisible: 1
   m_SceneHierarchy:
     m_TreeViewState:
-      scrollPos: {x: 0, y: 0}
-      m_SelectedIDs: 
-      m_LastClickedID: 0
-      m_ExpandedIDs: 
+      scrollPos: {x: 0, y: 240}
+      m_SelectedIDs: 602d0100
+      m_LastClickedID: 77152
+      m_ExpandedIDs: c668f7ff3270f8ff7e9af8ff94fbfbff34c7ffff38c7ffff44c7ffff48c7ffff54c7ffff58c7fffff2c7ffff06c8ffff02d0ffff06d0ffffa8d0ffffacd0ffffe6d0ffffead0fffff6d0fffffad0ffff06d1ffff0ad1ffff46d1ffff4ad1ffff3cd3ffff40d3ffff8ad9ffff8ed9ffff9ad9ffff9ed9ffffaad9ffffaed9ffffa6dcffffaadcffffb6dcffffbadcffffc6dcffffcadcffffd6dcffffdadcffffe6dcffffeadcffff06ddffff0addffff16ddffff1addffff26ddffff2addffff36ddffff3addffff46ddffff4addffff56ddffff5addfffffee1ffff02e2ffff0ce5ffff10e5ffff2ce5ffff30e5ffff34e5ffff38e5ffff3ce5ffff10fbffff14fbffff802a0100ba2a01001288010016890100
       m_RenameOverlay:
         m_UserAcceptedRename: 0
         m_Name: 
@@ -469,8 +469,8 @@ MonoBehaviour:
     m_TextWithWhitespace: "Scene\u200B"
   m_Pos:
     serializedVersion: 2
-    x: 344
-    y: 24
+    x: 343
+    y: 79
     width: 1058
     height: 733
   m_SerializedDataModeController:
@@ -1153,9 +1153,9 @@ MonoBehaviour:
   m_AudioPlay: 0
   m_DebugDrawModesUseInteractiveLightBakingData: 0
   m_Position:
-    m_Target: {x: 105.1344, y: 5.3936224, z: 146.09071}
+    m_Target: {x: 291.77765, y: 5.8769794, z: 164.76859}
     speed: 2
-    m_Value: {x: 105.1344, y: 5.3936224, z: 146.09071}
+    m_Value: {x: 291.77765, y: 5.8769794, z: 164.76859}
   m_RenderMode: 0
   m_CameraMode:
     drawMode: 0
@@ -1201,13 +1201,13 @@ MonoBehaviour:
     m_GridAxis: 1
     m_gridOpacity: 0.5
   m_Rotation:
-    m_Target: {x: 0.052719336, y: -0.65219665, z: 0.044059355, w: 0.755555}
+    m_Target: {x: 0.03778276, y: 0.868854, z: -0.07817056, w: 0.4885966}
     speed: 2
-    m_Value: {x: -0.052719336, y: 0.65219665, z: -0.044059355, w: -0.755555}
+    m_Value: {x: 0.037643403, y: 0.8690767, z: -0.07818134, w: 0.4870074}
   m_Size:
-    m_Target: 1.8000795
+    m_Target: 2.05003
     speed: 2
-    m_Value: 1.8000795
+    m_Value: 1.9617511
   m_Ortho:
     m_Target: 0
     speed: 2
@@ -1263,7 +1263,7 @@ MonoBehaviour:
   m_Pos:
     serializedVersion: 2
     x: 0
-    y: 783
+    y: 838
     width: 1402
     height: 196
   m_SerializedDataModeController:
@@ -1286,9 +1286,9 @@ MonoBehaviour:
     m_SceneHandles: 
     m_ShowAllHits: 0
     m_SkipHidden: 0
-    m_SearchArea: 1
+    m_SearchArea: 2
     m_Folders:
-    - Assets/Code/TutorialInfo
+    - Assets/Environment/abandoned-house (1)/source
     m_Globs: []
     m_ProductIds: 
     m_AnyWithAssetOrigin: 0
@@ -1298,16 +1298,16 @@ MonoBehaviour:
   m_ViewMode: 1
   m_StartGridSize: 64
   m_LastFolders:
-  - Assets/Code/TutorialInfo
+  - Assets/Environment/abandoned-house (1)/source
   m_LastFoldersGridSize: -1
   m_LastProjectPath: C:\Users\marcw\OneDrive\Documents\GitHub\APKV-PROJECT
   m_LockTracker:
     m_IsLocked: 0
   m_FolderTreeState:
-    scrollPos: {x: 0, y: 207}
-    m_SelectedIDs: 74b50100
-    m_LastClickedID: 111988
-    m_ExpandedIDs: 00000000e6b20100e8b20100eab20100ecb20100
+    scrollPos: {x: 0, y: 243}
+    m_SelectedIDs: bcf30200
+    m_LastClickedID: 193468
+    m_ExpandedIDs: 00000000e6b20100e8b20100eab20100ecb20100bab401007ee40200baf3020000ca9a3b
     m_RenameOverlay:
       m_UserAcceptedRename: 0
       m_Name: 
@@ -1364,7 +1364,7 @@ MonoBehaviour:
   m_ListAreaState:
     m_SelectedInstanceIDs: 
     m_LastClickedInstanceID: 0
-    m_HadKeyboardFocusLastEvent: 0
+    m_HadKeyboardFocusLastEvent: 1
     m_ExpandedInstanceIDs: c623000000000000
     m_RenameOverlay:
       m_UserAcceptedRename: 0
@@ -1382,7 +1382,7 @@ MonoBehaviour:
       m_OriginalEventType: 11
       m_IsRenamingFilename: 1
       m_TrimLeadingAndTrailingWhitespace: 0
-      m_ClientGUIView: {fileID: 0}
+      m_ClientGUIView: {fileID: 10}
     m_CreateAssetUtility:
       m_EndAction: {fileID: 0}
       m_InstanceID: 0
@@ -1451,8 +1451,8 @@ MonoBehaviour:
     m_TextWithWhitespace: "Inspector\u200B"
   m_Pos:
     serializedVersion: 2
-    x: 1404
-    y: 24
+    x: 1403
+    y: 79
     width: 516
     height: 955
   m_SerializedDataModeController:
